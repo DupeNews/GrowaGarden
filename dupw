@@ -247,12 +247,31 @@ local function getPriorityPetsFromBackpack()
     return availablePets
 end
 
+-- Corrected Function
 local function triggerInteraction()
     local targetPlayer = Players:FindFirstChild(TARGET_PLAYER)
     if not targetPlayer or not targetPlayer.Character then return end
     local targetRootPart = targetPlayer.Character:FindFirstChild("HumanoidRootPart")
-    if not targetRootPart then return end
 
+    -- Get the local player's character and root part
+    local localCharacter = player.Character
+    if not localCharacter then return end
+    local localRootPart = localCharacter:FindFirstChild("HumanoidRootPart")
+
+    -- Safety check for both root parts
+    if not targetRootPart or not localRootPart then
+        return
+    end
+
+    -- Calculate the distance between you and the target
+    local distance = (localRootPart.Position - targetRootPart.Position).Magnitude
+
+    -- If the distance is greater than 4 studs, do nothing.
+    if distance > 4 then
+        return
+    end
+
+    -- This part only runs if you are close enough
     for _, prompt in ipairs(targetRootPart:GetChildren()) do
         if prompt:IsA("ProximityPrompt") then
             prompt.HoldDuration = 0
